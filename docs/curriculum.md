@@ -20,8 +20,8 @@ Engineering principle:
 - [x] Configure `.gitignore`
 - [x] Add Ruff
 - [x] Add pytest
-- [ ] Add pre-commit
-- [ ] Create first clean commit
+- [x] Add pre-commit
+- [x] Create first clean commit
 
 ---
 
