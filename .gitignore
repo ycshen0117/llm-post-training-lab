@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data
+data/*
+!data/README.md
+
+# Training outputs
+outputs/*
+!outputs/README.md
+
+# Checkpoints
+checkpoints/
+
+# Experiment tracking / caches
+wandb/
+.cache/
