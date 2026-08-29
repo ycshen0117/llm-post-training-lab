@@ -27,10 +27,10 @@ Engineering principle:
 
 ## Milestone 2 — Data Pipeline
 
-- [ ] Select a small instruction dataset
-- [ ] Load data with Hugging Face Datasets
-- [ ] Inspect JSON / JSONL with `jq`, `rg`, `head`, `wc`
-- [ ] Implement preprocessing
+- [x] Select a small instruction dataset
+- [x] Load data with Hugging Face Datasets
+- [x] Inspect JSON / JSONL with `jq`, `rg`, `head`, `wc`
+- [x] Implement preprocessing
 - [ ] Format data for SFT
 - [ ] Add preprocessing tests
 - [ ] Create a reproducible data-preparation command
