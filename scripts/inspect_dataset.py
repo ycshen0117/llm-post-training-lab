@@ -1,22 +1,21 @@
-import json
-from pathlib import Path
-
 from datasets import load_dataset
+
+from llm_post_training_lab.data import preprocess_gsm8k_example
 
 
 def main() -> None:
     dataset = load_dataset("openai/gsm8k", "main")
 
-    train = dataset["train"]
-    sample = train.select(range(5))
+    example = dataset["train"][0]
 
-    output_path = Path("data/gsm8k_sample.jsonl")
+    print("Raw example:")
+    print(example)
+    print()
 
-    with output_path.open("w", encoding="utf-8") as file:
-        for example in sample:
-            file.write(json.dumps(example, ensure_ascii=False) + "\n")
+    processed = preprocess_gsm8k_example(example)
 
-    print(f"Saved {len(sample)} examples to {output_path}")
+    print("Processed example:")
+    print(processed)
 
 
 if __name__ == "__main__":
