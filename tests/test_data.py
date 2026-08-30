@@ -3,6 +3,7 @@ import pytest
 from llm_post_training_lab.data import (
     preprocess_gsm8k_dataset,
     preprocess_gsm8k_example,
+    to_chat_messages,
 )
 from datasets import Dataset
 
@@ -44,3 +45,25 @@ def test_preprocess_gsm8k_dataset() -> None:
     assert processed.column_names == ["prompt", "response"]
     assert processed[0]["prompt"] == "What is 1 + 1?"
     assert processed[0]["response"] == "1 + 1 = 2.\n#### 2"
+
+
+def test_to_chat_messages() -> None:
+    example = {
+        "prompt": "What is 2 + 2?",
+        "response": "2 + 2 = 4.\n#### 4",
+    }
+
+    result = to_chat_messages(example)
+
+    assert result == {
+        "messages": [
+            {
+                "role": "user",
+                "content": "What is 2 + 2?",
+            },
+            {
+                "role": "assistant",
+                "content": "2 + 2 = 4.\n#### 4",
+            },
+        ]
+    }
