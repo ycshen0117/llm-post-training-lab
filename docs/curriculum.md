@@ -31,9 +31,9 @@ Engineering principle:
 - [x] Load data with Hugging Face Datasets
 - [x] Inspect JSON / JSONL with `jq`, `rg`, `head`, `wc`
 - [x] Implement preprocessing
-- [ ] Format data for SFT
-- [ ] Add preprocessing tests
-- [ ] Create a reproducible data-preparation command
+- [x] Format data for SFT
+- [x] Add preprocessing tests
+- [x] Create a reproducible data-preparation command
 
 ---
 
