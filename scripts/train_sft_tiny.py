@@ -1,12 +1,15 @@
 import torch
+from datasets import load_from_disk
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
+DATASET_PATH = "data/processed/gsm8k/train"
 IGNORE_INDEX = -100
 
+NUM_TRAIN_EXAMPLES = 32
 BATCH_SIZE = 2
 LEARNING_RATE = 1e-5
 MAX_STEPS = 5
@@ -21,119 +24,6 @@ def get_device() -> torch.device:
         return torch.device("mps")
 
     return torch.device("cpu")
-
-
-def load_examples() -> list[dict]:
-    """Return tiny SFT examples for local pipeline validation."""
-    return [
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "What is the capital of France?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Paris.",
-                },
-            ]
-        },
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "What is 2 + 2?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "4.",
-                },
-            ]
-        },
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "What planet do humans live on?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Earth.",
-                },
-            ]
-        },
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "What is the opposite of hot?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Cold.",
-                },
-            ]
-        },
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "How many days are in a week?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Seven.",
-                },
-            ]
-        },
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "What gas do humans need to breathe?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Oxygen.",
-                },
-            ]
-        },
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "What is the first month of the year?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "January.",
-                },
-            ]
-        },
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "What color is a clear daytime sky usually?",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Blue.",
-                },
-            ]
-        },
-    ]
-
-
-class SFTDataset(Dataset):
-    def __init__(self, examples: list[dict]) -> None:
-        self.examples = examples
-
-    def __len__(self) -> int:
-        return len(self.examples)
-
-    def __getitem__(self, index: int) -> dict:
-        return self.examples[index]
 
 
 def tokenize_example(
@@ -218,8 +108,6 @@ def make_collate_fn(tokenizer):
         )
 
         assert input_ids.shape == attention_mask.shape == labels.shape
-        assert input_ids.shape == attention_mask.shape
-        assert input_ids.shape == labels.shape
         assert (labels != IGNORE_INDEX).any(dim=1).all(), (
             "Every example must contain at least one supervised token."
         )
@@ -240,7 +128,6 @@ def inspect_batch(batch: dict[str, torch.Tensor]) -> None:
     print(f"labels:         {batch['labels'].shape}")
 
     num_supervised = (batch["labels"] != IGNORE_INDEX).sum().item()
-
     num_positions = batch["labels"].numel()
 
     print(f"Supervised tokens: {num_supervised}/{num_positions}")
@@ -253,6 +140,17 @@ def main() -> None:
     device = get_device()
     print(f"Using device: {device}")
 
+    full_dataset = load_from_disk(DATASET_PATH)
+
+    num_examples = min(
+        NUM_TRAIN_EXAMPLES,
+        len(full_dataset),
+    )
+
+    dataset = full_dataset.select(
+        range(num_examples),
+    )
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -261,10 +159,6 @@ def main() -> None:
 
     model.to(device)
     model.train()
-
-    examples = load_examples()
-
-    dataset = SFTDataset(examples)
 
     dataloader = DataLoader(
         dataset,
@@ -275,7 +169,6 @@ def main() -> None:
 
     print(f"Dataset size: {len(dataset)}")
 
-    # Inspect one batch before training.
     first_batch = next(iter(dataloader))
     inspect_batch(first_batch)
 
