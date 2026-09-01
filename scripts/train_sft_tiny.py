@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 from datasets import load_from_disk
 from torch.nn.utils.rnn import pad_sequence
@@ -7,6 +9,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 DATASET_PATH = "data/processed/gsm8k/train"
+CHECKPOINT_DIR = Path("checkpoints/sft-tiny")
 IGNORE_INDEX = -100
 
 NUM_TRAIN_EXAMPLES = 32
@@ -196,6 +199,18 @@ def main() -> None:
 
         if step + 1 >= MAX_STEPS:
             break
+
+    print("\nSaving checkpoint:")
+
+    CHECKPOINT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    model.save_pretrained(CHECKPOINT_DIR)
+    tokenizer.save_pretrained(CHECKPOINT_DIR)
+
+    print(f"Saved checkpoint to {CHECKPOINT_DIR}")
 
 
 if __name__ == "__main__":
