@@ -10,6 +10,7 @@ IGNORE_INDEX = -100
 BATCH_SIZE = 2
 LEARNING_RATE = 1e-5
 MAX_STEPS = 5
+MAX_LENGTH = 512
 
 
 def get_device() -> torch.device:
@@ -169,12 +170,21 @@ def tokenize_example(
     ), "Prompt tokenization is not a prefix of the full conversation."
 
     labels = input_ids.clone()
-
-    # Ignore the user prompt and assistant header.
-    # Only the assistant response contributes to the SFT loss.
     labels[:prompt_length] = IGNORE_INDEX
 
-    assert (labels != IGNORE_INDEX).any(), "No supervised assistant tokens remain."
+    original_length = input_ids.shape[0]
+
+    input_ids = input_ids[:MAX_LENGTH]
+    attention_mask = attention_mask[:MAX_LENGTH]
+    labels = labels[:MAX_LENGTH]
+
+    if not (labels != IGNORE_INDEX).any():
+        raise ValueError(
+            "Truncation removed all supervised assistant tokens. "
+            f"original_length={original_length}, "
+            f"prompt_length={prompt_length}, "
+            f"max_length={MAX_LENGTH}"
+        )
 
     return {
         "input_ids": input_ids,
@@ -208,6 +218,11 @@ def make_collate_fn(tokenizer):
         )
 
         assert input_ids.shape == attention_mask.shape == labels.shape
+        assert input_ids.shape == attention_mask.shape
+        assert input_ids.shape == labels.shape
+        assert (labels != IGNORE_INDEX).any(dim=1).all(), (
+            "Every example must contain at least one supervised token."
+        )
 
         return {
             "input_ids": input_ids,
