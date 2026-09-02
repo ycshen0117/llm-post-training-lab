@@ -2,15 +2,15 @@ from pathlib import Path
 
 import torch
 from datasets import load_from_disk
-from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from llm_post_training_lab.sft import IGNORE_INDEX, make_collate_fn
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 DATASET_PATH = "data/processed/gsm8k/train"
 CHECKPOINT_DIR = Path("checkpoints/sft-tiny")
-IGNORE_INDEX = -100
 
 NUM_TRAIN_EXAMPLES = 32
 BATCH_SIZE = 2
@@ -28,101 +28,6 @@ def get_device() -> torch.device:
         return torch.device("mps")
 
     return torch.device("cpu")
-
-
-def tokenize_example(
-    example: dict,
-    tokenizer,
-) -> dict[str, torch.Tensor]:
-    messages = example["messages"]
-
-    full_encoding = tokenizer.apply_chat_template(
-        messages,
-        tokenize=True,
-        add_generation_prompt=False,
-        return_dict=True,
-        return_tensors="pt",
-    )
-
-    prompt_encoding = tokenizer.apply_chat_template(
-        messages[:-1],
-        tokenize=True,
-        add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt",
-    )
-
-    input_ids = full_encoding["input_ids"].squeeze(0)
-    attention_mask = full_encoding["attention_mask"].squeeze(0)
-
-    prompt_ids = prompt_encoding["input_ids"].squeeze(0)
-    prompt_length = prompt_ids.shape[0]
-
-    assert torch.equal(
-        prompt_ids,
-        input_ids[:prompt_length],
-    ), "Prompt tokenization is not a prefix of the full conversation."
-
-    labels = input_ids.clone()
-    labels[:prompt_length] = IGNORE_INDEX
-
-    original_length = input_ids.shape[0]
-
-    input_ids = input_ids[:MAX_LENGTH]
-    attention_mask = attention_mask[:MAX_LENGTH]
-    labels = labels[:MAX_LENGTH]
-
-    if not (labels != IGNORE_INDEX).any():
-        raise ValueError(
-            "Truncation removed all supervised assistant tokens. "
-            f"original_length={original_length}, "
-            f"prompt_length={prompt_length}, "
-            f"max_length={MAX_LENGTH}"
-        )
-
-    return {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,
-        "labels": labels,
-    }
-
-
-def make_collate_fn(tokenizer):
-    def collate_fn(
-        examples: list[dict],
-    ) -> dict[str, torch.Tensor]:
-        tokenized = [tokenize_example(example, tokenizer) for example in examples]
-
-        input_ids = pad_sequence(
-            [example["input_ids"] for example in tokenized],
-            batch_first=True,
-            padding_value=tokenizer.pad_token_id,
-        )
-
-        attention_mask = pad_sequence(
-            [example["attention_mask"] for example in tokenized],
-            batch_first=True,
-            padding_value=0,
-        )
-
-        labels = pad_sequence(
-            [example["labels"] for example in tokenized],
-            batch_first=True,
-            padding_value=IGNORE_INDEX,
-        )
-
-        assert input_ids.shape == attention_mask.shape == labels.shape
-        assert (labels != IGNORE_INDEX).any(dim=1).all(), (
-            "Every example must contain at least one supervised token."
-        )
-
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
-        }
-
-    return collate_fn
 
 
 def inspect_batch(batch: dict[str, torch.Tensor]) -> None:
@@ -175,7 +80,10 @@ def main() -> None:
         dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
-        collate_fn=make_collate_fn(tokenizer),
+        collate_fn=make_collate_fn(
+            tokenizer,
+            MAX_LENGTH,
+        ),
         generator=data_generator,
     )
 
