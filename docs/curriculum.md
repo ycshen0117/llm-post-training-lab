@@ -39,12 +39,12 @@ Engineering principle:
 
 ## Milestone 3 — Local SFT
 
-- [ ] Select a small causal language model
-- [ ] Load model and tokenizer
-- [ ] Implement SFT training
-- [ ] Run a tiny local smoke test
-- [ ] Save checkpoints
-- [ ] Add a simple generation test
+- [x] Select a small causal language model
+- [x] Load model and tokenizer
+- [x] Implement SFT training
+- [x] Run a tiny local smoke test
+- [x] Save checkpoints
+- [x] Add a simple generation test
 
 ---
 
