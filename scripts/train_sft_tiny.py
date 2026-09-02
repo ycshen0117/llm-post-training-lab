@@ -7,7 +7,6 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from llm_post_training_lab.sft import IGNORE_INDEX, make_collate_fn
 
-
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 DATASET_PATH = "data/processed/gsm8k/train"
 CHECKPOINT_DIR = Path("checkpoints/sft-tiny")

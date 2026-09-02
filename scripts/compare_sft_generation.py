@@ -3,7 +3,6 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
 BASE_MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 SFT_CHECKPOINT = Path("checkpoints/sft-tiny")
 

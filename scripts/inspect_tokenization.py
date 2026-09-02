@@ -1,6 +1,5 @@
 from transformers import AutoTokenizer
 
-
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
 

@@ -1,11 +1,11 @@
 import pytest
+from datasets import Dataset
 
 from llm_post_training_lab.data import (
     preprocess_gsm8k_dataset,
     preprocess_gsm8k_example,
     to_chat_messages,
 )
-from datasets import Dataset
 
 
 def test_preprocess_gsm8k_example() -> None:

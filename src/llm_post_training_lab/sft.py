@@ -1,7 +1,6 @@
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-
 IGNORE_INDEX = -100
 
 

@@ -1,7 +1,6 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 IGNORE_INDEX = -100
 
