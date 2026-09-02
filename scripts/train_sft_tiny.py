@@ -17,6 +17,7 @@ BATCH_SIZE = 2
 LEARNING_RATE = 1e-5
 MAX_STEPS = 5
 MAX_LENGTH = 512
+SEED = 42
 
 
 def get_device() -> torch.device:
@@ -140,8 +141,12 @@ def inspect_batch(batch: dict[str, torch.Tensor]) -> None:
 
 
 def main() -> None:
+    torch.manual_seed(SEED)
+
     device = get_device()
+
     print(f"Using device: {device}")
+    print(f"Random seed: {SEED}")
 
     full_dataset = load_from_disk(DATASET_PATH)
 
@@ -163,17 +168,18 @@ def main() -> None:
     model.to(device)
     model.train()
 
+    data_generator = torch.Generator()
+    data_generator.manual_seed(SEED)
+
     dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
         collate_fn=make_collate_fn(tokenizer),
+        generator=data_generator,
     )
 
     print(f"Dataset size: {len(dataset)}")
-
-    first_batch = next(iter(dataloader))
-    inspect_batch(first_batch)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -183,6 +189,9 @@ def main() -> None:
     print("\nTraining:")
 
     for step, batch in enumerate(dataloader):
+        if step == 0:
+            inspect_batch(batch)
+
         batch = {key: value.to(device) for key, value in batch.items()}
 
         optimizer.zero_grad()
