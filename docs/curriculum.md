@@ -50,11 +50,11 @@ Engineering principle:
 
 ## Milestone 4 — Automation and Configuration
 
-- [ ] Add shell training scripts
-- [ ] Add Makefile targets
-- [ ] Separate experiment configuration from code
-- [ ] Introduce Hydra when configuration becomes complex
-- [ ] Support command-line overrides
+- [x] Add shell training scripts
+- [x] Add Makefile targets
+- [x] Separate experiment configuration from code
+- [x] Introduce Hydra when configuration becomes complex
+- [x] Support command-line overrides
 
 Example workflow:
 
