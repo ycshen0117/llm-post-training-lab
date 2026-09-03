@@ -1,3 +1,5 @@
+import argparse
+import math
 from pathlib import Path
 
 import torch
@@ -7,16 +9,86 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from llm_post_training_lab.sft import IGNORE_INDEX, make_collate_fn
 
-MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
-DATASET_PATH = "data/processed/gsm8k/train"
-CHECKPOINT_DIR = Path("checkpoints/sft-tiny")
 
-NUM_TRAIN_EXAMPLES = 32
-BATCH_SIZE = 2
-LEARNING_RATE = 1e-5
-MAX_STEPS = 5
-MAX_LENGTH = 512
-SEED = 42
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run a tiny local SFT smoke test.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        default="Qwen/Qwen2.5-0.5B-Instruct",
+        help="Model ID or local model directory.",
+    )
+    parser.add_argument(
+        "--dataset-path",
+        type=str,
+        default="data/processed/gsm8k/train",
+        help="Path to the processed training dataset.",
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=Path("checkpoints/sft-tiny"),
+        help="Directory for saving the model and tokenizer.",
+    )
+    parser.add_argument(
+        "--num-train-examples",
+        type=int,
+        default=32,
+        help="Maximum number of training examples to select.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=2,
+        help="Number of examples per batch.",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=1e-5,
+        help="Learning rate for AdamW.",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=5,
+        help="Maximum optimizer steps within one pass through the dataset.",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=512,
+        help="Maximum token length after truncation.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for PyTorch and data shuffling.",
+    )
+
+    args = parser.parse_args()
+
+    if args.num_train_examples <= 0:
+        parser.error("--num-train-examples must be positive.")
+
+    if args.batch_size <= 0:
+        parser.error("--batch-size must be positive.")
+
+    if args.max_steps <= 0:
+        parser.error("--max-steps must be positive.")
+
+    if args.max_length <= 0:
+        parser.error("--max-length must be positive.")
+
+    if not math.isfinite(args.learning_rate) or args.learning_rate <= 0:
+        parser.error("--learning-rate must be finite and positive.")
+
+    return args
 
 
 def get_device() -> torch.device:
@@ -45,17 +117,21 @@ def inspect_batch(batch: dict[str, torch.Tensor]) -> None:
 
 
 def main() -> None:
-    torch.manual_seed(SEED)
+    args = parse_args()
 
+    torch.manual_seed(args.seed)
     device = get_device()
 
     print(f"Using device: {device}")
-    print(f"Random seed: {SEED}")
+    print(f"Random seed: {args.seed}")
+    print(f"Max steps: {args.max_steps}")
+    print(f"Learning rate: {args.learning_rate}")
+    print(f"Checkpoint directory: {args.checkpoint_dir}")
 
-    full_dataset = load_from_disk(DATASET_PATH)
+    full_dataset = load_from_disk(args.dataset_path)
 
     num_examples = min(
-        NUM_TRAIN_EXAMPLES,
+        args.num_train_examples,
         len(full_dataset),
     )
 
@@ -63,25 +139,25 @@ def main() -> None:
         range(num_examples),
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
 
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID,
+        args.model_id,
     )
 
     model.to(device)
     model.train()
 
     data_generator = torch.Generator()
-    data_generator.manual_seed(SEED)
+    data_generator.manual_seed(args.seed)
 
     dataloader = DataLoader(
         dataset,
-        batch_size=BATCH_SIZE,
+        batch_size=args.batch_size,
         shuffle=True,
         collate_fn=make_collate_fn(
             tokenizer,
-            MAX_LENGTH,
+            args.max_length,
         ),
         generator=data_generator,
     )
@@ -90,7 +166,7 @@ def main() -> None:
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=LEARNING_RATE,
+        lr=args.learning_rate,
     )
 
     print("\nTraining:")
@@ -113,20 +189,20 @@ def main() -> None:
 
         print(f"step={step:03d} loss={loss.item():.4f}")
 
-        if step + 1 >= MAX_STEPS:
+        if step + 1 >= args.max_steps:
             break
 
     print("\nSaving checkpoint:")
 
-    CHECKPOINT_DIR.mkdir(
+    args.checkpoint_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    model.save_pretrained(CHECKPOINT_DIR)
-    tokenizer.save_pretrained(CHECKPOINT_DIR)
+    model.save_pretrained(args.checkpoint_dir)
+    tokenizer.save_pretrained(args.checkpoint_dir)
 
-    print(f"Saved checkpoint to {CHECKPOINT_DIR}")
+    print(f"Saved checkpoint to {args.checkpoint_dir}")
 
 
 if __name__ == "__main__":
