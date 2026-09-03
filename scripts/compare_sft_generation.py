@@ -1,12 +1,8 @@
+import argparse
 from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-BASE_MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
-SFT_CHECKPOINT = Path("checkpoints/sft-tiny")
-
-MAX_NEW_TOKENS = 128
 
 PROMPTS = [
     "What is 17 + 25? Show your reasoning.",
@@ -16,6 +12,44 @@ PROMPTS = [
         "Show your reasoning."
     ),
 ]
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Compare base and SFT model responses on fixed prompts.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--base-model-id",
+        type=str,
+        default="Qwen/Qwen2.5-0.5B-Instruct",
+        help="Model ID or local directory for the pre-SFT reference model.",
+    )
+    parser.add_argument(
+        "--sft-checkpoint",
+        type=Path,
+        default=Path("checkpoints/sft-tiny"),
+        help="Local directory containing the SFT model and tokenizer.",
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=128,
+        help="Maximum number of new tokens per response.",
+    )
+
+    args = parser.parse_args()
+
+    if args.max_new_tokens <= 0:
+        parser.error("--max-new-tokens must be positive.")
+
+    if not args.sft_checkpoint.is_dir():
+        parser.error(
+            f"--sft-checkpoint must be an existing directory: {args.sft_checkpoint}"
+        )
+
+    return args
 
 
 def get_device() -> torch.device:
@@ -32,6 +66,7 @@ def generate_responses(
     model_path: str | Path,
     prompts: list[str],
     device: torch.device,
+    max_new_tokens: int,
 ) -> list[str]:
     tokenizer = AutoTokenizer.from_pretrained(
         model_path,
@@ -58,14 +93,14 @@ def generate_responses(
             messages,
             tokenize=True,
             add_generation_prompt=True,
-            return_dict=True,
             return_tensors="pt",
+            return_dict=True,
         ).to(device)
 
         with torch.inference_mode():
             output_ids = model.generate(
                 **inputs,
-                max_new_tokens=MAX_NEW_TOKENS,
+                max_new_tokens=max_new_tokens,
                 do_sample=False,
             )
 
@@ -120,31 +155,30 @@ def print_comparison(
 
 
 def main() -> None:
-    if not SFT_CHECKPOINT.exists():
-        raise FileNotFoundError(
-            f"SFT checkpoint does not exist: {SFT_CHECKPOINT}. "
-            "Run scripts/train_sft_tiny.py first."
-        )
+    args = parse_args()
 
     device = get_device()
     print(f"Using device: {device}")
+    print(f"Max new tokens: {args.max_new_tokens}")
 
-    print(f"\nLoading base model: {BASE_MODEL_ID}")
+    print(f"\nLoading base model: {args.base_model_id}")
 
     base_responses = generate_responses(
-        BASE_MODEL_ID,
-        PROMPTS,
-        device,
+        model_path=args.base_model_id,
+        prompts=PROMPTS,
+        device=device,
+        max_new_tokens=args.max_new_tokens,
     )
 
     clear_device_cache(device)
 
-    print(f"\nLoading SFT checkpoint: {SFT_CHECKPOINT}")
+    print(f"\nLoading SFT checkpoint: {args.sft_checkpoint}")
 
     sft_responses = generate_responses(
-        SFT_CHECKPOINT,
-        PROMPTS,
-        device,
+        model_path=args.sft_checkpoint,
+        prompts=PROMPTS,
+        device=device,
+        max_new_tokens=args.max_new_tokens,
     )
 
     clear_device_cache(device)
