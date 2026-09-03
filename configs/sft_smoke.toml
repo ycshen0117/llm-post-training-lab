@@ -1,0 +1,10 @@
+model_id = "Qwen/Qwen2.5-0.5B-Instruct"
+dataset_path = "data/processed/gsm8k/train"
+checkpoint_dir = "checkpoints/sft-smoke"
+
+num_train_examples = 32
+batch_size = 2
+learning_rate = 2e-5
+max_steps = 5
+max_length = 512
+seed = 42

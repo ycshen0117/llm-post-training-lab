@@ -1,5 +1,7 @@
 import argparse
+import json
 import math
+import tomllib
 from pathlib import Path
 
 import torch
@@ -10,12 +12,47 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from llm_post_training_lab.sft import IGNORE_INDEX, make_collate_fn
 
 
+def load_config(path: Path, parser: argparse.ArgumentParser) -> dict:
+    try:
+        with path.open("rb") as file:
+            config = tomllib.load(file)
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
+        parser.error(f"Cannot read configuration {path}: {error}")
+
+    expected_types = {
+        "model_id": (str,),
+        "dataset_path": (str,),
+        "checkpoint_dir": (str,),
+        "num_train_examples": (int,),
+        "batch_size": (int,),
+        "learning_rate": (int, float),
+        "max_steps": (int,),
+        "max_length": (int,),
+        "seed": (int,),
+    }
+
+    for name, value in config.items():
+        if name not in expected_types:
+            parser.error(f"Unknown configuration key in {path}: {name}")
+
+        if type(value) not in expected_types[name]:
+            expected = " or ".join(t.__name__ for t in expected_types[name])
+            parser.error(f"{path}: {name} must be {expected}.")
+
+    return config
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run a tiny local SFT smoke test.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Path to a TOML experiment configuration.",
+    )
     parser.add_argument(
         "--model-id",
         type=str,
@@ -71,6 +108,12 @@ def parse_args() -> argparse.Namespace:
         help="Random seed for PyTorch and data shuffling.",
     )
 
+    preliminary_args, _ = parser.parse_known_args()
+
+    if preliminary_args.config is not None:
+        config = load_config(preliminary_args.config, parser)
+        parser.set_defaults(**config)
+
     args = parser.parse_args()
 
     if args.num_train_examples <= 0:
@@ -118,6 +161,10 @@ def inspect_batch(batch: dict[str, torch.Tensor]) -> None:
 
 def main() -> None:
     args = parse_args()
+    config_text = json.dumps(vars(args), indent=2, default=str)
+
+    print("\nResolved configuration:")
+    print(config_text)
 
     torch.manual_seed(args.seed)
     device = get_device()
@@ -202,7 +249,11 @@ def main() -> None:
     model.save_pretrained(args.checkpoint_dir)
     tokenizer.save_pretrained(args.checkpoint_dir)
 
+    config_path = args.checkpoint_dir / "run_config.json"
+    config_path.write_text(config_text + "\n", encoding="utf-8")
+
     print(f"Saved checkpoint to {args.checkpoint_dir}")
+    print(f"Saved run configuration to {config_path}")
 
 
 if __name__ == "__main__":
