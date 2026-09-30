@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := check
 
+DATA_ARGS ?=
 SFT_ARGS ?=
 SFT_CHECKPOINT ?= checkpoints/sft-smoke
 COMPARE_ARGS ?=
@@ -7,7 +8,7 @@ COMPARE_ARGS ?=
 .PHONY: data test lint format check sft-smoke compare
 
 data:
-	uv run python scripts/prepare_data.py
+	uv run python scripts/prepare_data.py $(DATA_ARGS)
 
 test:
 	uv run pytest

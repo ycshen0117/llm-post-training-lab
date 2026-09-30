@@ -225,6 +225,7 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model_id,
+        dtype=torch.float32,
     )
 
     model.to(device)

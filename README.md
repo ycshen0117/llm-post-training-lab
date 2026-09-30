@@ -80,6 +80,38 @@ Configuration priority is:
 built-in defaults < TOML configuration < command-line arguments
 ```
 
+## DSI GPU Smoke Test
+
+Prepare data on a compute node and save it to scratch:
+
+```bash
+make data DATA_ARGS="--output-dir /net/scratch/$USER/datasets/gsm8k"
+```
+
+The training split is saved under the output directory's `train` subdirectory.
+Hugging Face's download cache is controlled separately by `HF_HOME`.
+Without `DATA_ARGS`, `make data` retains the local default at
+`data/processed/gsm8k/train`.
+
+After obtaining a Slurm GPU allocation, run a five-step smoke test:
+
+```bash
+RUN_DIR="/net/scratch/$USER/runs/sft-gpu-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$RUN_DIR"
+set -o pipefail
+
+make sft-smoke \
+  SFT_ARGS="--device cuda --precision bf16 --dataset-path /net/scratch/$USER/datasets/gsm8k/train --batch-size 1 --num-train-examples 32 --max-steps 5 --max-length 512 --checkpoint-dir $RUN_DIR/checkpoint" \
+  2>&1 | tee "$RUN_DIR/train.log"
+```
+
+Explicit CUDA requests fail if CUDA is unavailable. BF16 requires a supported
+CUDA GPU. Model parameters stay in FP32 while autocast controls the precision
+of forward computations. Use `--precision fp32` if BF16 is unsupported.
+
+Scratch stores reproducible data and active experiment outputs. Copy important
+results to persistent storage for long-term retention.
+
 ## Compare Base and SFT Generations
 
 Compare the base model with the default SFT checkpoint:
