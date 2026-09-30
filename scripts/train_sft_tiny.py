@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import tomllib
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
@@ -29,6 +30,8 @@ def load_config(path: Path, parser: argparse.ArgumentParser) -> dict:
         "max_steps": (int,),
         "max_length": (int,),
         "seed": (int,),
+        "device": (str,),
+        "precision": (str,),
     }
 
     for name, value in config.items():
@@ -107,6 +110,18 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="Random seed for PyTorch and data shuffling.",
     )
+    parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default="auto",
+        help="Training device. Explicit requests must be available.",
+    )
+    parser.add_argument(
+        "--precision",
+        choices=("fp32", "bf16"),
+        default="fp32",
+        help="Training precision. BF16 requires a supported CUDA GPU.",
+    )
 
     preliminary_args, _ = parser.parse_known_args()
 
@@ -115,6 +130,12 @@ def parse_args() -> argparse.Namespace:
         parser.set_defaults(**config)
 
     args = parser.parse_args()
+
+    if args.device not in ("auto", "cpu", "mps", "cuda"):
+        parser.error("Invalid device in configuration.")
+
+    if args.precision not in ("fp32", "bf16"):
+        parser.error("Invalid precision in configuration.")
 
     if args.num_train_examples <= 0:
         parser.error("--num-train-examples must be positive.")
@@ -134,14 +155,21 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def get_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
+def get_device(requested: str) -> torch.device:
+    if requested == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
 
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is unavailable.")
 
-    return torch.device("cpu")
+    if requested == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("MPS was requested but is unavailable.")
+
+    return torch.device(requested)
 
 
 def inspect_batch(batch: dict[str, torch.Tensor]) -> None:
@@ -167,9 +195,16 @@ def main() -> None:
     print(config_text)
 
     torch.manual_seed(args.seed)
-    device = get_device()
+    device = get_device(args.device)
+
+    if args.precision == "bf16":
+        if device.type != "cuda":
+            raise RuntimeError("BF16 training requires CUDA in this script.")
+        if not torch.cuda.is_bf16_supported():
+            raise RuntimeError("This CUDA GPU does not support BF16.")
 
     print(f"Using device: {device}")
+    print(f"Precision: {args.precision}")
     print(f"Random seed: {args.seed}")
     print(f"Max steps: {args.max_steps}")
     print(f"Learning rate: {args.learning_rate}")
@@ -193,7 +228,11 @@ def main() -> None:
     )
 
     model.to(device)
+    model.config.use_cache = False
     model.train()
+
+    print(f"Model device: {next(model.parameters()).device}")
+    print(f"Parameter dtype: {next(model.parameters()).dtype}")
 
     data_generator = torch.Generator()
     data_generator.manual_seed(args.seed)
@@ -226,8 +265,15 @@ def main() -> None:
 
         optimizer.zero_grad()
 
-        outputs = model(**batch)
-        loss = outputs.loss
+        amp_context = (
+            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+            if args.precision == "bf16"
+            else nullcontext()
+        )
+
+        with amp_context:
+            outputs = model(**batch)
+            loss = outputs.loss
 
         assert torch.isfinite(loss), f"Non-finite loss at step {step}: {loss.item()}"
 
