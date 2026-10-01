@@ -149,6 +149,58 @@ but excludes model loading and checkpoint saving. CUDA synchronization brackets
 the timed loop. Peak allocated and reserved memory measure this process's
 PyTorch allocator, not total GPU usage; non-CUDA memory values are `null`.
 
+## DSI Slurm Batch Smoke Test
+
+Submit from the repository root on a login node. The job requests one GPU,
+four CPU cores, 16 GiB of host RAM (not GPU memory), and 30 minutes. It uses
+DSI's `protected` QoS for this short smoke test: one job at a time, no scheduler
+preemption, and a higher fairshare cost than `general`. See the
+[DSI batch job guide](https://cluster-policy.ds.uchicago.edu/using-the-cluster/batch-jobs/).
+
+The prepared dataset must already exist at
+`/net/scratch/$USER/datasets/gsm8k/train`. The script explicitly sets the cache
+and temporary directories because batch shells may not read `~/.bashrc`.
+It trains with batch size 1 and accumulation 4 for 20 optimizer updates, then
+runs the existing base/SFT generation comparison on the allocated GPU.
+
+```bash
+cd ~/Developer/llm-post-training-lab
+RUN_DIR="/net/scratch/$USER/runs/sft-batch-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$RUN_DIR"
+
+sbatch --output="$RUN_DIR/slurm-%j.log" \
+  scripts/slurm_sft_smoke.sbatch "$RUN_DIR"
+```
+
+Create the output directory before submitting: Slurm opens its log before the
+script runs. `%j` is replaced by the job ID. Pass the output path on the command
+line because shell variables are not expanded inside `#SBATCH` directives.
+The script uses `SLURM_SUBMIT_DIR` to find the repository; Slurm executes a
+spooled script copy whose own directory is not the checkout.
+
+Submission prints `Submitted batch job JOB_ID`; this confirms submission, not
+completion. Replace `12345` below with that ID:
+
+```bash
+JOB_ID=12345
+squeue -j "$JOB_ID"
+tail -n 50 "$RUN_DIR/slurm-$JOB_ID.log"
+sacct -j "$JOB_ID" --format=JobID,State,ExitCode,Elapsed
+```
+
+`PD` means pending and `R` means running. The log may not exist while pending.
+After the job leaves the queue, check `sacct`: success is `COMPLETED` with exit
+code `0:0`. Training or comparison failures propagate through `tee` because
+the script enables `pipefail`. The job can continue after the submitting SSH
+connection closes. To cancel it, use `scancel "$JOB_ID"`.
+
+Outputs are `slurm-JOB_ID.log`, `train.log`, `compare.log`, and `checkpoint/`
+under the run directory. Inspect `checkpoint/train_metrics.json` for 20
+optimizer updates, 80 microbatches, and 80 examples. The two fixed comparison
+prompts check checkpoint loading and generation; they are not a quality score.
+Slurm captures this batch script, but not a snapshot of the repository: leave
+the checkout unchanged until the job finishes.
+
 ## Compare Base and SFT Generations
 
 Compare the base model with the default SFT checkpoint:
