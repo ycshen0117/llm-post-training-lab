@@ -4,6 +4,7 @@ checkpoint_dir = "checkpoints/sft-smoke"
 
 num_train_examples = 32
 batch_size = 2
+gradient_accumulation_steps = 1
 learning_rate = 2e-5
 max_steps = 5
 max_length = 512

@@ -1,8 +1,10 @@
 import argparse
 import json
 import math
+import time
 import tomllib
 from contextlib import nullcontext
+from itertools import islice
 from pathlib import Path
 
 import torch
@@ -26,6 +28,7 @@ def load_config(path: Path, parser: argparse.ArgumentParser) -> dict:
         "checkpoint_dir": (str,),
         "num_train_examples": (int,),
         "batch_size": (int,),
+        "gradient_accumulation_steps": (int,),
         "learning_rate": (int, float),
         "max_steps": (int,),
         "max_length": (int,),
@@ -87,6 +90,12 @@ def parse_args() -> argparse.Namespace:
         help="Number of examples per batch.",
     )
     parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=1,
+        help="Number of microbatches per optimizer update.",
+    )
+    parser.add_argument(
         "--learning-rate",
         type=float,
         default=1e-5,
@@ -143,6 +152,9 @@ def parse_args() -> argparse.Namespace:
     if args.batch_size <= 0:
         parser.error("--batch-size must be positive.")
 
+    if args.gradient_accumulation_steps <= 0:
+        parser.error("--gradient-accumulation-steps must be positive.")
+
     if args.max_steps <= 0:
         parser.error("--max-steps must be positive.")
 
@@ -187,6 +199,114 @@ def inspect_batch(batch: dict[str, torch.Tensor]) -> None:
     assert num_supervised < num_positions
 
 
+def train_sft(
+    model: torch.nn.Module,
+    dataloader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    *,
+    max_steps: int,
+    gradient_accumulation_steps: int,
+    precision: str,
+) -> dict:
+    batch_iterator = iter(dataloader)
+    optimizer_steps = 0
+    microbatches = 0
+    examples = 0
+    supervised_tokens = 0
+    token_loss_sum = 0.0
+
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    elif device.type == "mps":
+        torch.mps.synchronize()
+    started_at = time.perf_counter()
+
+    for step in range(max_steps):
+        # Buffer only CPU batches. Each batch moves to the GPU separately.
+        window = list(islice(batch_iterator, gradient_accumulation_steps))
+        if not window:
+            break
+
+        # Causal LM loss predicts labels[1:] from the preceding positions.
+        token_counts = [
+            int((batch["labels"][:, 1:] != IGNORE_INDEX).sum().item())
+            for batch in window
+        ]
+        if any(count == 0 for count in token_counts):
+            raise ValueError("A microbatch has no supervised next-token targets.")
+        window_tokens = sum(token_counts)
+        window_examples = 0
+        window_loss_sum = 0.0
+        optimizer.zero_grad(set_to_none=True)
+
+        for batch, token_count in zip(window, token_counts, strict=True):
+            if microbatches == 0:
+                inspect_batch(batch)
+            batch = {key: value.to(device) for key, value in batch.items()}
+            amp_context = (
+                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                if precision == "bf16"
+                else nullcontext()
+            )
+            with amp_context:
+                outputs = model(**batch)
+                loss = outputs.loss
+
+            if not torch.isfinite(loss).item():
+                raise ValueError(f"Non-finite loss at microbatch {microbatches}.")
+
+            # Normalize by tokens, including incomplete final windows.
+            (loss * (token_count / window_tokens)).backward()
+            window_loss_sum += loss.item() * token_count
+            window_examples += batch["input_ids"].shape[0]
+            microbatches += 1
+            del outputs, loss, batch
+
+        optimizer.step()
+        optimizer_steps += 1
+        examples += window_examples
+        supervised_tokens += window_tokens
+        token_loss_sum += window_loss_sum
+        print(
+            f"optimizer_step={step + 1:03d} microbatches={len(window)} "
+            f"examples={window_examples} tokens={window_tokens} "
+            f"loss={window_loss_sum / window_tokens:.4f}",
+            flush=True,
+        )
+
+    if optimizer_steps == 0:
+        raise ValueError("No optimizer updates were performed.")
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps":
+        torch.mps.synchronize()
+    train_seconds = time.perf_counter() - started_at
+
+    return {
+        "optimizer_steps": optimizer_steps,
+        "microbatches": microbatches,
+        "examples": examples,
+        "supervised_tokens": supervised_tokens,
+        "mean_token_loss": token_loss_sum / supervised_tokens,
+        "train_seconds": train_seconds,
+        "seconds_per_optimizer_step": train_seconds / optimizer_steps,
+        "examples_per_second": examples / train_seconds,
+        "supervised_tokens_per_second": supervised_tokens / train_seconds,
+        "peak_allocated_gib": (
+            torch.cuda.max_memory_allocated(device) / 1024**3
+            if device.type == "cuda"
+            else None
+        ),
+        "peak_reserved_gib": (
+            torch.cuda.max_memory_reserved(device) / 1024**3
+            if device.type == "cuda"
+            else None
+        ),
+    }
+
+
 def main() -> None:
     args = parse_args()
     config_text = json.dumps(vars(args), indent=2, default=str)
@@ -208,6 +328,12 @@ def main() -> None:
     print(f"Random seed: {args.seed}")
     print(f"Max steps: {args.max_steps}")
     print(f"Learning rate: {args.learning_rate}")
+    print(f"Microbatch size: {args.batch_size}")
+    print(f"Gradient accumulation steps: {args.gradient_accumulation_steps}")
+    print(
+        "Nominal effective batch size (single GPU): "
+        f"{args.batch_size * args.gradient_accumulation_steps}"
+    )
     print(f"Checkpoint directory: {args.checkpoint_dir}")
 
     full_dataset = load_from_disk(args.dataset_path)
@@ -250,6 +376,10 @@ def main() -> None:
     )
 
     print(f"Dataset size: {len(dataset)}")
+    available_steps = math.ceil(len(dataloader) / args.gradient_accumulation_steps)
+    print(f"Available optimizer steps in one pass: {available_steps}")
+    if args.max_steps > available_steps:
+        print("Dataset will end before max_steps; training stops after one pass.")
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -258,33 +388,17 @@ def main() -> None:
 
     print("\nTraining:")
 
-    for step, batch in enumerate(dataloader):
-        if step == 0:
-            inspect_batch(batch)
-
-        batch = {key: value.to(device) for key, value in batch.items()}
-
-        optimizer.zero_grad()
-
-        amp_context = (
-            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-            if args.precision == "bf16"
-            else nullcontext()
-        )
-
-        with amp_context:
-            outputs = model(**batch)
-            loss = outputs.loss
-
-        assert torch.isfinite(loss), f"Non-finite loss at step {step}: {loss.item()}"
-
-        loss.backward()
-        optimizer.step()
-
-        print(f"step={step:03d} loss={loss.item():.4f}")
-
-        if step + 1 >= args.max_steps:
-            break
+    metrics = train_sft(
+        model,
+        dataloader,
+        optimizer,
+        device,
+        max_steps=args.max_steps,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        precision=args.precision,
+    )
+    print("\nTraining metrics:")
+    print(json.dumps(metrics, indent=2))
 
     print("\nSaving checkpoint:")
 
@@ -299,8 +413,12 @@ def main() -> None:
     config_path = args.checkpoint_dir / "run_config.json"
     config_path.write_text(config_text + "\n", encoding="utf-8")
 
+    metrics_path = args.checkpoint_dir / "train_metrics.json"
+    metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+
     print(f"Saved checkpoint to {args.checkpoint_dir}")
     print(f"Saved run configuration to {config_path}")
+    print(f"Saved training metrics to {metrics_path}")
 
 
 if __name__ == "__main__":

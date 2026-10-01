@@ -112,6 +112,43 @@ of forward computations. Use `--precision fp32` if BF16 is unsupported.
 Scratch stores reproducible data and active experiment outputs. Copy important
 results to persistent storage for long-term retention.
 
+## Gradient Accumulation and Training Metrics
+
+`--batch-size` controls the microbatch processed by each forward/backward pass.
+`--gradient-accumulation-steps` controls how many microbatches contribute to one
+optimizer update. On a single GPU, the nominal effective batch size is their
+product. Parameters are updated only after the accumulation window finishes.
+
+For example, batch size 1 with accumulation 4 processes four examples separately
+before updating parameters. Loss contributions are weighted by the number of
+supervised next-token targets so variable-length answers receive the same token
+weighting as a combined batch. A final incomplete window is also updated using
+its actual token count.
+
+`--max-steps` counts optimizer updates. The script still makes only one pass
+through the selected dataset and reports if it will end before the requested
+number of updates. With 128 examples, batch size 1, accumulation 4, and 20 updates,
+training consumes 80 examples in 80 microbatches.
+
+After obtaining a GPU allocation:
+
+```bash
+RUN_DIR="/net/scratch/$USER/runs/sft-accum-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$RUN_DIR"
+set -o pipefail
+
+make sft-smoke \
+  SFT_ARGS="--device cuda --precision bf16 --dataset-path /net/scratch/$USER/datasets/gsm8k/train --batch-size 1 --gradient-accumulation-steps 4 --num-train-examples 128 --max-steps 20 --max-length 512 --checkpoint-dir $RUN_DIR/checkpoint" \
+  2>&1 | tee "$RUN_DIR/train.log"
+```
+
+Each successful checkpoint includes `train_metrics.json` with actual update,
+microbatch, example, and supervised-token counts; loop duration; throughput;
+and peak CUDA memory. Timing includes data collation and logging inside the loop,
+but excludes model loading and checkpoint saving. CUDA synchronization brackets
+the timed loop. Peak allocated and reserved memory measure this process's
+PyTorch allocator, not total GPU usage; non-CUDA memory values are `null`.
+
 ## Compare Base and SFT Generations
 
 Compare the base model with the default SFT checkpoint:
